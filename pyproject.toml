@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vimoose"
+version = "0.7.0"
+description = "离线运行、支持Windows控件磁吸的视觉手势鼠标"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "mediapipe==0.10.21",
+    "numpy==1.26.4",
+    "opencv-contrib-python==4.11.0.86",
+    "psutil==7.0.0",
+    "PySide6==6.11.1",
+    "comtypes==1.4.16",
+    "uiautomation==2.0.29",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pyinstaller==6.21.0",
+    "pytest==8.4.1",
+    "pytest-cov==6.2.1",
+]
+
+[project.scripts]
+vimoose = "gesture_mouse.app:main"
+
+[tool.setuptools.packages.find]
+include = ["gesture_mouse*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,11 @@
+# Vimoose 0.7.0 核心与开发工具锁定版本
+mediapipe==0.10.21
+numpy==1.26.4
+opencv-contrib-python==4.11.0.86
+psutil==7.0.0
+PySide6==6.11.1
+comtypes==1.4.16
+uiautomation==2.0.29
+pyinstaller==6.21.0
+pytest==8.4.1
+pytest-cov==6.2.1
