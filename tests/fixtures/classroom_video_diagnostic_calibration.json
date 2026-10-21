@@ -1,0 +1,9 @@
+{
+  "neutral_lateral": -0.15,
+  "neutral_angle": 0.30,
+  "neutral_height": -0.01,
+  "next_vector": [-0.30, 0.9539392014],
+  "previous_vector": [0.65, -0.7599342077],
+  "next_threshold": 0.85,
+  "previous_threshold": 0.35
+}

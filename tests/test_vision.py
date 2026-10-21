@@ -75,7 +75,7 @@ def _shift(frame: np.ndarray, dx: int) -> np.ndarray:
     return cv2.warpAffine(frame, transform, (frame.shape[1], frame.shape[0]))
 
 
-def test_landmarker_callback_keeps_middle_identity_well_beyond_eight_frames() -> None:
+def test_rejected_collapsed_skeleton_cannot_seed_background_tracking() -> None:
     detections = []
     worker = HandLandmarkerWorker(
         AppConfig(partial_finger_tracking=True, partial_tracking_frames=0),
@@ -111,6 +111,43 @@ def test_landmarker_callback_keeps_middle_identity_well_beyond_eight_frames() ->
             timestamp,
         )
 
-    observation = detections[-1].observations[0]
-    assert observation.partial_finger == "Middle"
-    assert observation.partial_position is not None
+    assert all(not packet.observations for packet in detections)
+    worker._face_guard.close()
+
+
+def test_landmarker_callback_without_transform_metadata_is_dropped() -> None:
+    """识别增强开启时不能用identity误还原过期回调坐标。"""
+
+    detections = []
+    worker = HandLandmarkerWorker(
+        AppConfig(recognition_zoom=1.15),
+        Path("unused.task"),
+        LatestSlot(),
+        LatestSlot(),
+        threading.Event(),
+        lambda _message: None,
+        detections.append,
+        lambda: False,
+    )
+    points = [SimpleNamespace(x=0.5, y=0.5, z=0.0) for _ in range(21)]
+    result = SimpleNamespace(hand_landmarks=[points], handedness=[])
+
+    worker._callback(result, _FakeImage(_tracking_frame()), 999)
+
+    assert detections == []
+
+
+def test_even_unlimited_legacy_flow_expires_after_150_milliseconds():
+    packets=[]
+    worker=HandLandmarkerWorker(AppConfig(partial_finger_tracking=True,partial_tracking_frames=0),
+        Path("unused.task"),LatestSlot(),LatestSlot(),threading.Event(),lambda m:None,packets.append,lambda:False)
+    worker._face_guard=SimpleNamespace(boxes=lambda rgb:[])
+    worker._accepted_hand_ms=1000
+    frame=_tracking_frame()
+    worker._partial_tracker.seed(frame,{"Index":(.25,.5)})
+    empty=SimpleNamespace(hand_landmarks=[],handedness=[])
+    for t,dx in ((1050,2),(1151,4)):
+        worker._submitted_at[t]=(time.monotonic_ns(),RecognitionTransform())
+        worker._callback(empty,_FakeImage(_shift(frame,dx)),t)
+    assert packets[0].observations[0].partial_finger=="Index"
+    assert not packets[1].observations

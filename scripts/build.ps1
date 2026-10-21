@@ -22,7 +22,9 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
 & $venvPython -m pip install -e "$projectRoot[dev]"
 & (Join-Path $PSScriptRoot "download_model.ps1")
 & $venvPython -m pytest
-& $venvPython -m PyInstaller --noconfirm --clean (Join-Path $projectRoot "Vimoose.spec")
+if ($LASTEXITCODE -ne 0) { throw "测试失败，停止构建。" }
+& $venvPython -m PyInstaller --noconfirm --distpath (Join-Path $projectRoot "dist\0.10.0") --workpath (Join-Path $projectRoot "build\0.10.0") (Join-Path $projectRoot "Vimoose.spec")
+if ($LASTEXITCODE -ne 0) { throw "打包失败。" }
 
-Write-Host "构建完成：$projectRoot\dist\Vimoose"
+Write-Host "构建完成：$projectRoot\dist\0.10.0\Vimoose"
 Write-Host "如已安装 Inno Setup，可继续编译 packaging\Vimoose.iss。"

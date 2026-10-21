@@ -1,6 +1,13 @@
 import pytest
 
-from gesture_mouse.calibration import CalibrationError, calculate_calibration
+from gesture_mouse.calibration import (
+    CalibrationError,
+    calculate_calibration,
+    pinch_ratio,
+)
+from gesture_mouse.contracts import Landmark
+
+from conftest import pointer_points
 
 
 def test_calibration_places_hysteresis_between_closed_and_open_samples() -> None:
@@ -55,3 +62,24 @@ def test_calibration_rejects_too_few_or_indistinguishable_samples() -> None:
             [0.46] * 8,
             [(0.5, 0.4)] * 8,
         )
+
+
+def test_pinch_ratio_uses_palm_length_when_side_view_collapses_width() -> None:
+    """校准与运行时必须使用同一稳健尺度，避免侧手校准值整体偏大。"""
+
+    points = list(pointer_points())
+    center_x = points[9].x
+    points = [
+        Landmark(
+            center_x + (point.x - center_x) * 0.25,
+            point.y,
+            point.z,
+        )
+        for point in points
+    ]
+    points[4] = Landmark(points[8].x - 0.08, points[8].y, points[4].z)
+
+    ratio = pinch_ratio(tuple(points))
+
+    # 单掌宽归一化会大于1；稳健尺度应仍把它识别为接近捏合。
+    assert 0.50 < ratio < 0.60

@@ -25,6 +25,17 @@ def left_pinch_points() -> tuple[Landmark, ...]:
     return tuple(points)
 
 
+def collapsed_index_near_thumb_points() -> tuple[Landmark, ...]:
+    """模拟食指身份瞬间跳到掌心，错误贴近拇指的预测帧。"""
+
+    points = list(pointer_points())
+    points[6] = Landmark(0.42, 0.45)
+    points[7] = Landmark(0.42, 0.52)
+    points[8] = Landmark(0.43, 0.56)
+    points[4] = points[8]
+    return tuple(points)
+
+
 def fist_like_left_pinch_points() -> tuple[Landmark, ...]:
     """录像中的侧向左键捏合：其余手指收拢，二维投影近似握拳。"""
 
@@ -34,8 +45,36 @@ def fist_like_left_pinch_points() -> tuple[Landmark, ...]:
 
 
 def right_pinch_points() -> tuple[Landmark, ...]:
+    """从食指指向过渡到中指主动伸出的右键捏合。"""
+
     points = list(pointer_points())
+    points[12] = Landmark(0.50, 0.32)
     points[4] = points[12]
+    return tuple(points)
+
+
+def bent_middle_right_pinch_points(
+    contact_ratio: float = 0.0,
+) -> tuple[Landmark, ...]:
+    """中指保持弯曲、但指尖主动前伸到拇指的真实右键姿势。"""
+
+    points = list(pointer_points())
+    points[10] = Landmark(0.50, 0.48)
+    points[11] = Landmark(0.58, 0.46)
+    points[12] = Landmark(0.68, 0.50)
+    palm_width = (
+        (points[5].x - points[17].x) ** 2
+        + (points[5].y - points[17].y) ** 2
+    ) ** 0.5
+    palm_length = (
+        (points[0].x - points[9].x) ** 2
+        + (points[0].y - points[9].y) ** 2
+    ) ** 0.5
+    scale = max(palm_width, min(palm_length * 0.75, palm_width * 2.0))
+    points[4] = Landmark(
+        points[12].x - contact_ratio * scale,
+        points[12].y,
+    )
     return tuple(points)
 
 
@@ -112,6 +151,49 @@ def open_palm_points() -> tuple[Landmark, ...]:
         (20, 0.66, 0.31),
     ):
         points[tip] = Landmark(x, y)
+    return tuple(points)
+
+
+def thumb_outside_left_contact_points() -> tuple[Landmark, ...]:
+    """拇指越过右边界后，模型把拇指尖预测到食指尖附近。"""
+
+    points = list(pointer_points())
+    points[6] = Landmark(0.68, 0.45)
+    points[7] = Landmark(0.84, 0.32)
+    points[8] = Landmark(0.99, 0.20)
+    points[1] = Landmark(0.88, 0.58)
+    points[2] = Landmark(0.94, 0.45)
+    points[3] = Landmark(0.99, 0.31)
+    points[4] = Landmark(1.02, 0.20)
+    return tuple(points)
+
+
+def thumb_outside_right_contact_points() -> tuple[Landmark, ...]:
+    """拇指越过右边界后，模型把拇指尖预测到中指尖附近。"""
+
+    points = list(pointer_points())
+    points[4] = Landmark(1.02, 0.30)
+    points[10] = Landmark(0.80, 0.46)
+    points[11] = Landmark(0.91, 0.37)
+    points[12] = Landmark(0.99, 0.30)
+    return tuple(points)
+
+
+def thumb_outside_fist_points() -> tuple[Landmark, ...]:
+    """四指投影像握拳，但拇指链已经离开画面。"""
+
+    points = list(fist_points())
+    for index, y in zip((1, 2, 3, 4), (0.82, 0.76, 0.70, 0.64)):
+        points[index] = Landmark(-0.04 - index * 0.01, y)
+    return tuple(points)
+
+
+def thumb_outside_open_palm_points() -> tuple[Landmark, ...]:
+    """四指仍张开，但拇指链已经离开画面。"""
+
+    points = list(open_palm_points())
+    for index, y in zip((1, 2, 3, 4), (0.82, 0.76, 0.70, 0.64)):
+        points[index] = Landmark(-0.04 - index * 0.01, y)
     return tuple(points)
 
 
