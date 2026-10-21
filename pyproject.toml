@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vimoose"
-version = "0.7.0"
+version = "0.10.0"
 description = "离线运行、支持Windows控件磁吸的视觉手势鼠标"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"

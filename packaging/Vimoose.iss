@@ -1,5 +1,5 @@
 #define MyAppName "Vimoose"
-#define MyAppVersion "0.7.0"
+#define MyAppVersion "0.10.0"
 #define MyAppPublisher "KIdiens"
 #define MyAppURL "https://github.com/KIdiens/Vimoose"
 #define MyAppExeName "Vimoose.exe"
@@ -15,7 +15,7 @@ AppSupportURL={#MyAppURL}/issues
 AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
-OutputDir=..\release
+OutputDir=..\release\0.10.0
 OutputBaseFilename=Vimoose-{#MyAppVersion}-Setup
 Compression=lzma2
 SolidCompression=yes
@@ -30,7 +30,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 Name: "startup"; Description: "登录 Windows 后自动启动"; GroupDescription: "附加选项："; Flags: unchecked
 
 [Files]
-Source: "..\dist\Vimoose\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\0.10.0\Vimoose\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\Vimoose"; Filename: "{app}\{#MyAppExeName}"

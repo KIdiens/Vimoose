@@ -30,12 +30,31 @@ class CalibrationResult:
 
 
 def pinch_ratio(points: Sequence[Landmark]) -> float:
-    """返回按掌宽归一化的拇指—食指二维距离。"""
+    """返回按稳健手部尺度归一化的拇指—食指二维距离。"""
 
     if len(points) != 21:
         raise CalibrationError("手部关键点数量不完整")
-    palm_width = max(hypot(points[5].x - points[17].x, points[5].y - points[17].y), 1e-4)
-    return hypot(points[4].x - points[8].x, points[4].y - points[8].y) / palm_width
+    return hypot(
+        points[4].x - points[8].x,
+        points[4].y - points[8].y,
+    ) / gesture_scale(points)
+
+
+def gesture_scale(points: Sequence[Landmark]) -> float:
+    """返回校准和运行时共用的二维手部尺度。"""
+
+    if len(points) != 21:
+        raise CalibrationError("手部关键点数量不完整")
+    palm_width = hypot(
+        points[5].x - points[17].x,
+        points[5].y - points[17].y,
+    )
+    palm_length = hypot(
+        points[0].x - points[9].x,
+        points[0].y - points[9].y,
+    )
+    length_scale = min(palm_length * 0.75, palm_width * 2.0)
+    return max(palm_width, length_scale, 1e-4)
 
 
 def pointer_position(points: Sequence[Landmark]) -> tuple[float, float]:

@@ -9,6 +9,7 @@ build/
 dist/
 release/
 GesturePilot/
+/Vimoose/
 artifacts/
 *.spec.bak
 *.log

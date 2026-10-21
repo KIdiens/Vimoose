@@ -7,6 +7,7 @@ import ctypes
 import logging
 import os
 import sys
+from pathlib import Path
 from ctypes import wintypes
 
 from PySide6.QtCore import QCoreApplication, QTimer
@@ -39,10 +40,13 @@ def _enable_dpi_awareness() -> None:
 def _arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Vimoose 视觉手势鼠标")
     parser.add_argument("--minimized", action="store_true", help="启动后只显示托盘")
+    parser.add_argument("--config",type=Path,help="使用指定配置文件，供独立验收或便携运行")
+    parser.add_argument("--verify-models",type=Path,metavar="报告路径",
+                        help="仅校验手部及面部过滤模型，执行离线推理并输出 JSON 后退出")
     parser.add_argument(
         "--safe-mode",
         action="store_true",
-        help="不注入鼠标事件，用于界面和摄像头诊断",
+        help="不注入鼠标、键盘或 Office 操作，用于界面和摄像头诊断",
     )
     parser.add_argument(
         "--diagnostic-seconds",
@@ -62,6 +66,9 @@ def main(argv: list[str] | None = None) -> int:
     args = _arguments(argv)
     _enable_dpi_awareness()
     setup_logging()
+    if args.verify_models:
+        from gesture_mouse.model_diagnostics import verify_models
+        return verify_models(args.verify_models)
 
     QCoreApplication.setOrganizationName("Vimoose")
     QCoreApplication.setApplicationName("Vimoose")
@@ -70,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
     app.setWindowIcon(build_app_icon())
 
-    store = ConfigStore()
+    store = ConfigStore(args.config)
     config = store.load()
     try:
         backend = (

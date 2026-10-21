@@ -276,8 +276,23 @@ class HandLandmarkerWorker(threading.Thread):
         )
         self._last_handedness = ""
         self._last_handedness_score = 0.0
+        from gesture_mouse.hand_guard import HandGuard
+        self._hand_guard = HandGuard()
+        self._face_guard = None
+        self._accepted_hand_ms = -10000
+        self._last_callback_ms = -1
 
     def _callback(
+        self, result, output_image, timestamp_ms,
+    ) -> None:
+        try:
+            self._process_callback(result, output_image, timestamp_ms)
+        except Exception:
+            LOGGER.exception("手部准入检查失败，停止控制")
+            self._partial_tracker.reset()
+            self.on_error("手部安全检测不可用，控制已停止；请检查模型文件。")
+
+    def _process_callback(
         self,
         result: vision.HandLandmarkerResult,
         _output_image: mp.Image,
@@ -285,20 +300,37 @@ class HandLandmarkerWorker(threading.Thread):
     ) -> None:
         callback_ns = time.monotonic_ns()
         with self._submitted_lock:
-            submitted_ns, transform = self._submitted_at.pop(
-                timestamp_ms,
-                (callback_ns, RecognitionTransform()),
-            )
+            metadata = self._submitted_at.pop(timestamp_ms, None)
             if len(self._submitted_at) > 60:
                 oldest = sorted(self._submitted_at)[:-30]
                 for key in oldest:
                     self._submitted_at.pop(key, None)
+        if metadata is None:
+            # 没有对应裁剪变换时，使用identity会把识别增强后的坐标当作
+            # 原画面坐标，造成光标突跳甚至误触；宁可丢弃该过期回调。
+            LOGGER.warning("丢弃缺少提交元数据的识别回调 timestamp_ms=%s", timestamp_ms)
+            self._partial_tracker.reset()
+            self._last_handedness = ""
+            self._last_handedness_score = 0.0
+            return
+        submitted_ns, transform = metadata
+        if timestamp_ms <= self._last_callback_ms:
+            return
+        self._last_callback_ms = timestamp_ms
         inference_ms = max(0.0, (callback_ns - submitted_ns) / 1_000_000)
         timestamp_ns = timestamp_ms * 1_000_000
         observations: list[HandObservation] = []
         output_frame = np.ascontiguousarray(_output_image.numpy_view())
+        if self._face_guard is None:
+            from gesture_mouse.hand_guard import FaceRegions
+            self._face_guard = FaceRegions()
+        faces = self._face_guard.boxes(output_frame) if result.hand_landmarks else []
 
         for index, hand_points in enumerate(result.hand_landmarks):
+            if not self._hand_guard.accept(hand_points, timestamp_ms, faces):
+                self._partial_tracker.reset()
+                continue
+            self._accepted_hand_ms = timestamp_ms
             categories = result.handedness[index] if index < len(result.handedness) else []
             category = categories[0] if categories else None
             handedness = category.category_name if category else ""
@@ -336,7 +368,9 @@ class HandLandmarkerWorker(threading.Thread):
                 ),
             )
 
-        if not observations and self.config.partial_finger_tracking:
+        if (not observations and not result.hand_landmarks
+                and self.config.partial_finger_tracking
+                and 0 < timestamp_ms-self._accepted_hand_ms <= 150):
             tracked = self._partial_tracker.track(output_frame)
             if tracked:
                 selected = next(
@@ -357,7 +391,7 @@ class HandLandmarkerWorker(threading.Thread):
                         partial_position=restored,
                     ),
                 )
-        elif not self.config.partial_finger_tracking:
+        elif not observations or not self.config.partial_finger_tracking:
             self._partial_tracker.reset()
 
         packet = DetectionPacket(
@@ -423,3 +457,6 @@ class HandLandmarkerWorker(threading.Thread):
         except Exception:
             LOGGER.exception("MediaPipe推理线程异常")
             self.on_error("手部模型初始化或推理失败，请查看日志。")
+        finally:
+            if self._face_guard is not None:
+                self._face_guard.close()

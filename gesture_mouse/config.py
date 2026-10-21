@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, fields, field
 from pathlib import Path
 
 
-CONFIG_VERSION = 7
+CONFIG_VERSION = 11
 
 
 def app_data_dir() -> Path:
@@ -53,7 +53,7 @@ class AppConfig:
     pinch_release: float = 0.55
     pinch_arm: float = 0.72
     right_pinch_approach_delta: float = 0.22
-    drag_hold_ms: int = 5000
+    drag_hold_ms: int = 2000
     fist_hold_ms: int = 500
     hand_lost_ms: int = 200
     scroll_threshold: float = 0.12
@@ -64,9 +64,9 @@ class AppConfig:
     page_swipe_threshold: float = 0.70
     cursor_snap_enabled: bool = True
     cursor_snap_radius_px: int = 30
-    partial_finger_tracking: bool = True
-    # 0表示只按光流质量决定续跟踪寿命；正数用于诊断或保守限时。
-    partial_tracking_frames: int = 0
+    partial_finger_tracking: bool = False
+    # 即使显式开启，也只允许最近有效完整手之后的150毫秒短时续跟踪。
+    partial_tracking_frames: int = 4
     min_detection_confidence: float = 0.40
     min_presence_confidence: float = 0.35
     min_tracking_confidence: float = 0.40
@@ -74,6 +74,15 @@ class AppConfig:
     preview_fps: int = 15
     start_with_windows: bool = False
     auto_start_control: bool = False
+    auto_office_enabled: bool = True
+    classroom_enabled: bool = False
+    classroom_hand: str = "Right"
+    classroom_region: list[float] = field(default_factory=lambda: [0.,0.,1.,1.])
+    classroom_calibration: dict = field(default_factory=dict)
+    classroom_camera_signature: str = ""
+
+    def classroom_signature(self) -> str:
+        return f"{self.camera_index}:{self.camera_width}:{self.camera_height}:{self.mirror}:{self.classroom_hand}"
 
     @classmethod
     def from_mapping(cls, raw: dict[str, object]) -> "AppConfig":
@@ -128,6 +137,29 @@ class AppConfig:
                 values["pointer_margin_x"] = 0.20
             if float(values.get("pointer_margin_y", 0.10)) == 0.10:
                 values["pointer_margin_y"] = 0.16
+        if source_version < 8:
+            # 0.7.0把默认拖拽等待提高到5秒后，最新实测反馈认为等待过长。
+            # 只迁移该版本的默认值，其他用户自定义时长保持不变。
+            if int(values.get("drag_hold_ms", 5000)) == 5000:
+                values["drag_hold_ms"] = 2000
+        if source_version < 9:
+            # 旧校准按单一掌宽生成阈值，无法直接用于0.8.1引入的稳健
+            # 手部尺度。只下调超过新安全默认值的部分，保留更保守的设置。
+            values["pinch_engage"] = min(
+                float(values.get("pinch_engage", 0.42)),
+                0.42,
+            )
+            values["pinch_release"] = min(
+                float(values.get("pinch_release", 0.55)),
+                0.55,
+            )
+            values["pinch_arm"] = min(
+                float(values.get("pinch_arm", 0.72)),
+                0.72,
+            )
+        if source_version < 11:
+            values.update(classroom_enabled=False, partial_finger_tracking=False)
+        values["classroom_enabled"] = False
         values["version"] = CONFIG_VERSION
         return cls(**values)
 
@@ -201,6 +233,22 @@ class AppConfig:
         self.preview_fps = max(5, min(30, int(self.preview_fps)))
         if self.handedness not in {"Left", "Right", "Any"}:
             self.handedness = "Right"
+        if self.classroom_hand not in {"Left", "Right"}:
+            self.classroom_hand = "Right"
+        self.classroom_enabled = False
+        try:
+            from math import isfinite
+            r = [float(x) for x in self.classroom_region]
+            if (len(r) != 4 or not all(isfinite(x) and 0 <= x <= 1 for x in r)
+                    or r[2]-r[0] < .1 or r[3]-r[1] < .1):
+                raise ValueError("课堂有效区无效")
+            self.classroom_region = r
+        except (TypeError, ValueError):
+            self.classroom_region = [0.,0.,1.,1.]
+        if not isinstance(self.classroom_calibration, dict):
+            self.classroom_calibration = {}
+        if self.classroom_camera_signature != self.classroom_signature():
+            self.classroom_calibration = {}
 
 
 class ConfigStore:
@@ -220,9 +268,11 @@ class ConfigStore:
             return AppConfig()
         try:
             raw = json.loads(source.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                raise ValueError("配置文件根节点必须是JSON对象")
             config = AppConfig.from_mapping(raw)
             config.validate()
-            if source != self.path:
+            if source != self.path or int(raw.get("version", 0) or 0) != CONFIG_VERSION:
                 self.save(config)
             return config
         except (OSError, ValueError, TypeError, json.JSONDecodeError):

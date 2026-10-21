@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(0, 7, 0, 0),
-    prodvers=(0, 7, 0, 0),
+    filevers=(0, 10, 0, 0),
+    prodvers=(0, 10, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,12 +16,12 @@ VSVersionInfo(
         [
           StringStruct('CompanyName', 'KIdiens'),
           StringStruct('FileDescription', 'Vimoose 视觉手势鼠标'),
-          StringStruct('FileVersion', '0.7.0'),
+          StringStruct('FileVersion', '0.10.0'),
           StringStruct('InternalName', 'Vimoose'),
           StringStruct('LegalCopyright', 'Copyright (c) 2026 KIdiens'),
           StringStruct('OriginalFilename', 'Vimoose.exe'),
           StringStruct('ProductName', 'Vimoose'),
-          StringStruct('ProductVersion', '0.7.0')
+          StringStruct('ProductVersion', '0.10.0')
         ]
       )
     ]),

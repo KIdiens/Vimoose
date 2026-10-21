@@ -8,11 +8,11 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
-from math import hypot
 from pathlib import Path
 
 import psutil
 
+from gesture_mouse.calibration import gesture_scale
 from gesture_mouse.config import AppConfig
 from gesture_mouse.contracts import (
     DetectionPacket,
@@ -31,6 +31,7 @@ from gesture_mouse.vision import CameraWorker, HandLandmarkerWorker, RollingRate
 
 
 LOGGER = logging.getLogger(__name__)
+_MAX_CONTROL_PACKET_AGE_MS = 100
 
 
 class ControlWorker(threading.Thread):
@@ -44,6 +45,8 @@ class ControlWorker(threading.Thread):
         stop_event: threading.Event,
         on_state: Callable[[GestureType, bool], None],
         interpolation_ms: int,
+        engine_lock: threading.RLock | None = None,
+        office=None,
     ) -> None:
         super().__init__(name="gesture-control", daemon=True)
         self.detections = detections
@@ -51,15 +54,26 @@ class ControlWorker(threading.Thread):
         self.mouse = mouse
         self.stop_event = stop_event
         self.on_state = on_state
+        self.engine_lock = engine_lock or threading.RLock()
         self.motion = CursorMotionInterpolator(
             min_duration_ms=12,
             max_duration_ms=interpolation_ms,
         )
+        self._last_packet_timestamp_ns: int | None = None
+        from gesture_mouse.document_gestures import DocumentGestures
+        self.office = office
+        self.document_gestures = DocumentGestures(engine.config.mirror)
+        self._context_token = ""
 
     def _execute_commands(self, commands: list[MouseCommand]) -> None:
         now = time.monotonic_ns()
         immediate: list[MouseCommand] = []
         for command in commands:
+            if self.office:
+                if command.kind in (MouseCommandType.PAGE_NEXT,MouseCommandType.PAGE_PREVIOUS):
+                    continue
+                if command.kind == MouseCommandType.WHEEL and self.office.snapshot().target:
+                    continue
             if (
                 command.kind == MouseCommandType.MOVE
                 and command.x is not None
@@ -104,33 +118,100 @@ class ControlWorker(threading.Thread):
             ),
         )
 
+    def _commands_for_packet(
+        self,
+        packet: DetectionPacket,
+        now_ns: int,
+    ) -> list[MouseCommand]:
+        """丢弃过期或时间倒退的异步结果，避免旧动作改变当前状态。"""
+
+        age_ns = max(0, now_ns - packet.timestamp_ns)
+        max_age_ms = min(
+            self.engine.config.hand_lost_ms,
+            _MAX_CONTROL_PACKET_AGE_MS,
+        )
+        if age_ns >= max_age_ms * 1_000_000:
+            return self.engine.tick(now_ns)
+        if (
+            self._last_packet_timestamp_ns is not None
+            and packet.timestamp_ns <= self._last_packet_timestamp_ns
+        ):
+            return self.engine.tick(now_ns)
+        self._last_packet_timestamp_ns = packet.timestamp_ns
+        if packet.observations:
+            hand = packet.observations[0]
+            allowed = self.engine.config.handedness
+            if allowed != "Any" and hand.handedness != allowed:
+                if self.office:
+                    self.office.revoke()
+                    self.document_gestures.reset()
+                self.motion.cancel()
+                return self.engine.cancel_observation(now_ns)
+        if self.office:
+            hand = packet.observations[0] if packet.observations else None
+            if self.engine.paused or hand is None or len(hand.landmarks) != 21:
+                self.office.revoke()
+                self.document_gestures.reset()
+            else:
+                self.office.authorize("daily-control",now_ns)
+            status = self.office.snapshot()
+            token = status.token
+            if token != self._context_token:
+                self._context_token = token
+                self.document_gestures.reset()
+                self.motion.cancel()
+                self.mouse.release_all()
+                self.engine._release_left(now_ns)
+                self.engine._reset_transient()
+            if (token and status.target and self.engine.config.page_gestures_enabled
+                    and not self.engine.paused and not self.engine._left_button_down):
+                consumed,event = self.document_gestures.process(hand,token,status.target.kind)
+                if consumed:
+                    self.motion.cancel()
+                    self.engine._reset_transient()
+                    self.engine.last_hand_ns = packet.timestamp_ns
+                    self.engine.current_gesture = GestureType.SCROLL
+                    if event:
+                        self.office.submit(event)
+                        self.engine.current_gesture = (GestureType.PAGE_NEXT if event.direction>0
+                                                       else GestureType.PAGE_PREVIOUS)
+                    return []
+        if packet.observations:
+            return self.engine.process(packet.observations[0])
+        self.motion.cancel()
+        return self.engine.cancel_observation(now_ns)
+
     def run(self) -> None:
         revision = 0
         try:
             while not self.stop_event.is_set():
                 packet, next_revision = self.detections.wait_next(revision, timeout=0.008)
-                if packet is not None:
-                    revision = next_revision
-                    if packet.observations:
-                        commands = self.engine.process(packet.observations[0])
-                    else:
-                        commands = self.engine.tick(packet.timestamp_ns)
-                    if self.engine.current_gesture in {
-                        GestureType.PINCH_ARMED,
-                        GestureType.LEFT_PINCH,
-                        GestureType.RIGHT_PINCH,
-                    }:
-                        # 在执行点击前立即丢弃上一帧尚未完成的插值轨迹。
-                        self.motion.cancel()
-                    self._execute_commands(commands)
-                watchdog_commands = self.engine.tick(time.monotonic_ns())
-                self._execute_commands(watchdog_commands)
-                self._advance_motion(time.monotonic_ns())
-                self.on_state(self.engine.current_gesture, self.engine.paused)
+                with self.engine_lock:
+                    if packet is not None:
+                        revision = next_revision
+                        commands = self._commands_for_packet(
+                            packet,
+                            time.monotonic_ns(),
+                        )
+                        if self.engine.current_gesture in {
+                            GestureType.PINCH_ARMED,
+                            GestureType.LEFT_PINCH,
+                            GestureType.RIGHT_PINCH,
+                        }:
+                            # 在执行点击前立即丢弃上一帧尚未完成的插值轨迹。
+                            self.motion.cancel()
+                        self._execute_commands(commands)
+                    watchdog_commands = self.engine.tick(time.monotonic_ns())
+                    self._execute_commands(watchdog_commands)
+                    self._advance_motion(time.monotonic_ns())
+                    self.on_state(self.engine.current_gesture, self.engine.paused)
         except Exception:
             LOGGER.exception("控制线程异常")
         finally:
-            self.mouse.release_all()
+            if self.office:
+                self.office.revoke()
+            with self.engine_lock:
+                self.mouse.release_all()
 
 
 class GesturePipeline:
@@ -146,6 +227,8 @@ class GesturePipeline:
         self.mouse = mouse
         self.model_path = model_path or default_model_path()
         self.engine = GestureEngine(config)
+        self.config.classroom_enabled = False
+        self.office = None
 
         self.frames: LatestSlot[FramePacket] = LatestSlot()
         self.detections: LatestSlot[DetectionPacket] = LatestSlot()
@@ -153,6 +236,7 @@ class GesturePipeline:
         self.stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
         self._lock = threading.RLock()
+        self._engine_lock = threading.RLock()
         self._snapshot = PipelineSnapshot()
         self._capture_rate = RollingRate()
         self._inference_rate = RollingRate()
@@ -172,6 +256,8 @@ class GesturePipeline:
     def _set_error(self, message: str) -> None:
         LOGGER.error(message)
         self.stop_event.set()
+        if self.office:
+            self.office.stop()
         self.mouse.release_all()
         with self._lock:
             self._snapshot.camera_error = message
@@ -205,10 +291,7 @@ class GesturePipeline:
             )
             if has_hand and len(packet.observations[0].landmarks) == 21:
                 points = packet.observations[0].landmarks
-                self._snapshot.metrics.palm_width_percent = 100.0 * hypot(
-                    points[5].x - points[17].x,
-                    points[5].y - points[17].y,
-                )
+                self._snapshot.metrics.palm_width_percent = 100.0 * gesture_scale(points)
             else:
                 self._snapshot.metrics.palm_width_percent = 0.0
 
@@ -274,6 +357,10 @@ class GesturePipeline:
             self._set_error,
             self._on_frame,
         )
+        from gesture_mouse.office_bridge import OfficeWorker
+        from gesture_mouse.mouse import NullMouseBackend
+        self.office = (OfficeWorker(isinstance(self.mouse.backend,NullMouseBackend),automatic=True)
+                       if self.config.auto_office_enabled else None)
         landmarker = HandLandmarkerWorker(
             self.config,
             self.model_path,
@@ -291,14 +378,18 @@ class GesturePipeline:
             self.stop_event,
             self._on_state,
             self.config.cursor_interpolation_ms,
+            self._engine_lock,
+            self.office,
         )
-        self._threads = [camera, landmarker, control]
+        self._threads = ([self.office] if self.office else []) + [camera, landmarker, control]
         for thread in self._threads:
             thread.start()
         LOGGER.info("实时流水线已启动")
         return True
 
     def stop(self) -> None:
+        if self.office:
+            self.office.stop()
         with self._lock:
             had_work = self._snapshot.running or bool(self._threads)
         if not had_work:
@@ -319,18 +410,25 @@ class GesturePipeline:
         LOGGER.info("实时流水线已停止")
 
     def set_paused(self, paused: bool) -> None:
-        commands = self.engine.set_paused(paused)
-        self.mouse.execute_many(commands)
-        self._on_state(self.engine.current_gesture, paused)
+        if self.office:
+            self.office.revoke()
+        with self._engine_lock:
+            commands = self.engine.set_paused(paused)
+            self.mouse.execute_many(commands)
+            self._on_state(self.engine.current_gesture, paused)
 
     def toggle_paused(self) -> None:
-        self.set_paused(not self.engine.paused)
+        with self._engine_lock:
+            self.set_paused(not self.engine.paused)
 
     def emergency_stop(self) -> None:
-        commands = self.engine.emergency_stop()
-        self.mouse.execute_many(commands)
-        self.mouse.release_all()
-        self._on_state(GestureType.PAUSED, True)
+        if self.office:
+            self.office.revoke()
+        with self._engine_lock:
+            commands = self.engine.emergency_stop()
+            self.mouse.execute_many(commands)
+            self.mouse.release_all()
+            self._on_state(GestureType.PAUSED, True)
 
     def update_config(self, config: AppConfig) -> None:
         was_running = self.running
@@ -380,6 +478,9 @@ class GesturePipeline:
             if self.mouse.last_error:
                 self._snapshot.message = self.mouse.last_error
             snapshot = copy.deepcopy(self._snapshot)
+            if self.office and snapshot.running and not snapshot.paused and not snapshot.camera_error:
+                status = self.office.snapshot()
+                snapshot.message = f"{status.message} · {snapshot.message}"
             snapshot.snap_target_name = self.mouse.snap_target_name
             if (
                 snapshot.snap_target_name

@@ -709,6 +709,7 @@ class MainWindow(QMainWindow):
         guide_layout = QHBoxLayout(guide)
         guide_layout.setContentsMargins(14, 10, 14, 10)
         guide_layout.setSpacing(16)
+        self.guide_labels = []
         for number, title, detail in (
             ("01", "完整入镜", "手腕和指尖都在框内"),
             ("02", "自然指向", "食指无需绷直即可移动"),
@@ -719,6 +720,7 @@ class MainWindow(QMainWindow):
             tag.setStyleSheet(f"color:{COLORS['text']}; font-weight:700;")
             caption = QLabel(detail)
             caption.setObjectName("subtle")
+            self.guide_labels.append((tag,caption))
             item.addWidget(tag)
             item.addWidget(caption)
             guide_layout.addLayout(item, 1)
@@ -821,7 +823,7 @@ class MainWindow(QMainWindow):
         gestures = (
             ("食指指向", "移动光标"),
             ("食指短捏合", "左键单击"),
-            ("食指捏合约 5 秒", "按住拖拽"),
+            ("食指捏合约 2 秒", "按住拖拽"),
             ("中指短捏合", "右键单击"),
             ("光标靠近按钮", "自动磁吸"),
             ("张掌上下 / 翻腕", "滚轮"),
@@ -989,7 +991,7 @@ class MainWindow(QMainWindow):
             3,
             "捏合灵敏度",
             28,
-            60,
+            68,
             round(self.config.pinch_engage * 100),
             "%",
             "提高后拇指与指尖无需贴得过紧即可触发。",
@@ -1021,7 +1023,7 @@ class MainWindow(QMainWindow):
             8000,
             self.config.drag_hold_ms,
             "ms",
-            "持续捏合达到该时间后才按下左键进入拖拽；默认5000ms。",
+            "持续捏合达到该时间后才按下左键进入拖拽；默认2000ms。",
         )
         feel_help = QLabel(
             "关键点到达安全区边缘时会直接完成屏幕边缘行程，无需把手移出画面。",
@@ -1060,8 +1062,15 @@ class MainWindow(QMainWindow):
 
         extension_group = QGroupBox("扩展手势")
         extension_layout = QVBoxLayout(extension_group)
+        self.auto_office_check = QCheckBox("自动适配前台 PowerPoint／Word（无需切换模式）")
+        self.auto_office_check.setChecked(self.config.auto_office_enabled)
+        extension_layout.addWidget(self.auto_office_check)
+        office_help = QLabel("PPT：张掌稳定后左右摆动翻页；Word：也可上下翻一屏。回正再做下一次；指向和捏合仍可移动、点击。PPT文字编辑和对话框中不翻页。")
+        office_help.setWordWrap(True)
+        office_help.setObjectName("subtle")
+        extension_layout.addWidget(office_help)
         self.page_gesture_check = QCheckBox(
-            "张掌左右挥动翻页（向左下一页，向右上一页）",
+            "启用张掌翻页（自动适配关闭时使用通用翻页键）",
         )
         self.page_gesture_check.setChecked(self.config.page_gestures_enabled)
         self.rotation_gesture_check = QCheckBox(
@@ -1069,11 +1078,11 @@ class MainWindow(QMainWindow):
         )
         self.rotation_gesture_check.setChecked(self.config.rotation_gestures_enabled)
         self.partial_tracking_check = QCheckBox(
-            "完整手部分出框后，持续续跟踪食指或中指",
+            "启用短时单指续跟踪（实验性，默认关闭）",
         )
         self.partial_tracking_check.setChecked(self.config.partial_finger_tracking)
         partial_help = QLabel(
-            "单指身份由最近一次完整手部结果继承；指尖仍在画面内时可续跟踪，完全离开摄像头后无法继续识别。",
+            "续跟踪最多150毫秒；检测到可疑面部小骨架后立即取消，不允许持续跟踪鼻部或背景。",
         )
         partial_help.setObjectName("subtle")
         partial_help.setWordWrap(True)
@@ -1193,14 +1202,19 @@ class MainWindow(QMainWindow):
         edge_margin = self.edge_reach_slider.value() / 100
         config.pointer_margin_x = edge_margin
         config.pointer_margin_y = max(0.08, edge_margin * 0.80)
-        config.pinch_engage = self.pinch_slider.value() / 100
-        config.pinch_release = min(1.2, config.pinch_engage + 0.13)
-        config.pinch_arm = min(1.4, config.pinch_release + 0.17)
+        previous_engage = config.pinch_engage
+        requested_engage = self.pinch_slider.value() / 100
+        config.pinch_engage = requested_engage
+        # 保存其他设置不能覆盖三步校准生成的个性化滞回参数。
+        if abs(requested_engage - previous_engage) > 0.005:
+            config.pinch_release = min(1.2, requested_engage + 0.13)
+            config.pinch_arm = min(1.4, config.pinch_release + 0.17)
         config.scroll_sensitivity = self.scroll_slider.value() / 100
         config.drag_hold_ms = self.drag_hold_slider.value()
         config.cursor_snap_enabled = self.cursor_snap_check.isChecked()
         config.cursor_snap_radius_px = self.cursor_snap_radius_slider.value()
         config.page_gestures_enabled = self.page_gesture_check.isChecked()
+        config.auto_office_enabled = self.auto_office_check.isChecked()
         config.rotation_gestures_enabled = self.rotation_gesture_check.isChecked()
         config.partial_finger_tracking = self.partial_tracking_check.isChecked()
         detection = self.detection_slider.value() / 100
@@ -1254,6 +1268,7 @@ class MainWindow(QMainWindow):
         self.cursor_snap_check.setChecked(self.config.cursor_snap_enabled)
         self.cursor_snap_radius_slider.setValue(self.config.cursor_snap_radius_px)
         self.page_gesture_check.setChecked(self.config.page_gestures_enabled)
+        self.auto_office_check.setChecked(self.config.auto_office_enabled)
         self.rotation_gesture_check.setChecked(self.config.rotation_gestures_enabled)
         self.partial_tracking_check.setChecked(self.config.partial_finger_tracking)
         self.preview_check.setChecked(self.config.preview_enabled)
@@ -1343,6 +1358,11 @@ class MainWindow(QMainWindow):
             f"识别增强 {round(self.config.recognition_zoom * 100)}%",
         )
         self.frame_legend.setVisible(self.config.recognition_zoom > 1.001)
+        self.frame_legend.setText("青色框：识别增强范围  ·  蓝色框：光标活动区域")
+        texts = (("01  指向移动","手腕和指尖完整入镜"),("02  捏合点击","先对准，再捏合松开"),("03  自动文档","PPT／Word 张掌翻页"))
+        for (title_label,detail_label),(title,detail) in zip(self.guide_labels,texts):
+            title_label.setText(title)
+            detail_label.setText(detail)
         if not snapshot.running:
             hint = "启动控制后显示近3秒手部检出率"
         elif snapshot.camera_signal_missing:
@@ -1401,14 +1421,8 @@ class MainWindow(QMainWindow):
             )
         margin_x = round(self.config.pointer_margin_x * width)
         margin_y = round(self.config.pointer_margin_y * height)
-        cv2.rectangle(
-            frame,
-            (margin_x, margin_y),
-            (width - margin_x, height - margin_y),
-            (248, 189, 56),
-            1,
-            cv2.LINE_AA,
-        )
+        cv2.rectangle(frame, (margin_x, margin_y), (width-margin_x, height-margin_y),
+                      (248,189,56), 1, cv2.LINE_AA)
         if detection and detection.observations:
             observation = detection.observations[0]
             points = observation.landmarks
