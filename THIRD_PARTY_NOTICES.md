@@ -4,7 +4,7 @@ Vimoose 使用下列主要开源组件。发布构建应依据最终锁定版本
 
 | 组件 | 用途 | 主要许可证 |
 |---|---|---|
-| MediaPipe | 手部关键点检测 | Apache License 2.0 |
+| MediaPipe | 手部关键点检测及面部小骨架过滤 | Apache License 2.0 |
 | OpenCV | 摄像头采集与图像处理 | Apache License 2.0 |
 | PySide6 / Qt for Python | 桌面界面与系统托盘 | LGPLv3 / GPLv3 / 商业许可 |
 | NumPy | 数值与图像数组 | BSD-3-Clause |
@@ -13,4 +13,4 @@ Vimoose 使用下列主要开源组件。发布构建应依据最终锁定版本
 | comtypes | Windows COM / UI Automation调用 | MIT |
 | PyInstaller | Windows目录包构建 | GPLv2-or-later，含引导程序例外 |
 
-MediaPipe 手部模型的具体许可与使用条件以模型下载源附带说明为准。
+MediaPipe 手部模型及短距离面部检测模型的具体许可与使用条件以官方模型下载源附带说明为准。模型版本及 SHA256 随程序放在 gesture_mouse/models/SHA256SUMS.json，来源见 scripts/download_model.ps1。0.10.0 不加载或分发课堂人体模型。
