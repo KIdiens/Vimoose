@@ -7,15 +7,17 @@ $modelUrl = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/han
 
 New-Item -ItemType Directory -Force -Path $modelDirectory | Out-Null
 
-if (Test-Path -LiteralPath $modelPath) {
-    Write-Host "模型已存在：$modelPath"
-    exit 0
+$hashes = Get-Content -Raw -LiteralPath (Join-Path $modelDirectory "SHA256SUMS.json") | ConvertFrom-Json
+$models = @{
+    "hand_landmarker.task" = $modelUrl
+    "face_detection_short_range.tflite" = "https://storage.googleapis.com/mediapipe-assets/face_detection_short_range.tflite"
 }
-
-Write-Host "正在下载 MediaPipe Hand Landmarker 模型..."
-Invoke-WebRequest -Uri $modelUrl -OutFile $modelPath
-
-$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $modelPath).Hash
-Write-Host "模型下载完成：$modelPath"
-Write-Host "SHA256：$hash"
-
+foreach ($name in $models.Keys) {
+    $targetPath = Join-Path $modelDirectory $name
+    if (-not (Test-Path -LiteralPath $targetPath)) {
+        Invoke-WebRequest -Uri $models[$name] -OutFile $targetPath
+    }
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $targetPath).Hash.ToLowerInvariant()
+    if ($actual -ne $hashes.$name) { throw "模型校验失败：$name；已保留文件，请检查来源。" }
+    Write-Host "模型已验证：$name SHA256=$actual"
+}
